@@ -1,0 +1,328 @@
+---
+title: "Time Series Project: IPI Food Industries"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+required_pkgs <- c(
+  "readr", "dplyr", "ggplot2", "lubridate",
+  "forecast", "tseries", "ellipse", "knitr"
+)
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_pkgs) > 0) {
+  options(repos = c(CRAN = "https://cloud.r-project.org"))
+  install.packages(missing_pkgs)
+}
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(forecast)
+library(tseries)
+library(ellipse)
+library(knitr)
+```
+
+# Part I: The data
+
+## 1. What does the chosen series represent?
+
+This dataset is an Industrial Production Index (IPI) for the food industries sector in France, monthly frequency, seasonally and working-day adjusted (CVS-CJO), base 100 in 2021. The variable is an index, so it is unit-free. Because the series is already CVS-CJO, I do not apply additional seasonal adjustment.
+
+```{r read-metadata}
+meta_candidates <- list.files("data", pattern = "caract", full.names = TRUE)
+if (length(meta_candidates) == 0) {
+  stop("Metadata file not found in data/.")
+}
+meta_path <- meta_candidates[1]
+meta <- read_delim(
+  meta_path,
+  delim = ";",
+  col_names = TRUE,
+  show_col_types = FALSE
+)
+names_norm <- iconv(names(meta), from = "", to = "ASCII//TRANSLIT")
+pick_col <- function(pattern) {
+  idx <- which(grepl(pattern, names_norm, ignore.case = TRUE))
+  if (length(idx) == 0) return(NA_character_)
+  names(meta)[idx[1]]
+}
+
+cols <- c(
+  pick_col("idbank"),
+  pick_col("mise"),
+  pick_col("period"),
+  pick_col("unit"),
+  pick_col("activ"),
+  pick_col("correct"),
+  pick_col("indicat"),
+  pick_col("zone"),
+  pick_col("base")
+)
+cols <- cols[!is.na(cols)]
+
+meta %>%
+  slice(1) %>%
+  select(all_of(cols)) %>%
+  kable()
+```
+
+Note: if column names in the metadata file contain accents on your machine, the table above may require manual renaming, but the content is the same.
+
+## 2. Transform the series to make it stationary if necessary
+
+We read the monthly values file, which contains multiple vintages. Each vintage is stored as a pair of columns: a value column followed by a code column (A, P, R, etc.). The row labeled "Mises a jour" gives the update date for each vintage. We select the most recent vintage by default.
+
+```{r read-series}
+values_path <- file.path("data", "valeurs_mensuelles.csv")
+raw <- read_delim(
+  values_path,
+  delim = ";",
+  col_names = FALSE,
+  show_col_types = FALSE
+)
+
+row_label <- raw[[1]]
+row_label_norm <- iconv(row_label, from = "", to = "ASCII//TRANSLIT")
+row_label_norm <- trimws(row_label_norm)
+idx_updates <- which(row_label_norm == "Mises a jour")[1]
+idx_period <- which(row_label_norm == "Periode")[1]
+if (is.na(idx_updates) || is.na(idx_period)) {
+  stop("Could not locate 'Mises a jour' or 'Periode' rows in the values file.")
+}
+
+updates_row <- raw[idx_updates, , drop = FALSE]
+update_strings <- as.character(unlist(updates_row[-1]))
+update_dates <- suppressWarnings(lubridate::dmy_hm(update_strings, quiet = TRUE))
+
+value_cols <- which(!is.na(update_dates)) + 1
+vintage_tbl <- tibble(
+  vintage_id = seq_along(value_cols),
+  update_date = update_dates[!is.na(update_dates)],
+  value_col = value_cols
+) %>% arrange(update_date)
+
+vintage_tbl %>% tail(6) %>% kable()
+
+latest_vintage <- vintage_tbl %>% slice_max(update_date, n = 1)
+chosen_col <- latest_vintage$value_col
+
+series_raw <- raw[(idx_period + 1):nrow(raw), , drop = FALSE] %>%
+  transmute(
+    period = .data[[names(raw)[1]]],
+    value = .data[[names(raw)[chosen_col]]]
+  ) %>%
+  mutate(
+    date = as.Date(paste0(period, "-01")),
+    value = readr::parse_number(value, locale = locale(decimal_mark = "."))
+  ) %>%
+  filter(!is.na(date))
+
+start_year <- year(min(series_raw$date))
+start_month <- month(min(series_raw$date))
+
+Y <- ts(series_raw$value, start = c(start_year, start_month), frequency = 12)
+Y <- stats::na.omit(Y)
+
+summary(series_raw$value)
+```
+
+We consider a log transform if all values are strictly positive. Then we determine the number of differences needed using unit-root tests and verify stationarity with ADF and KPSS.
+
+```{r stationarity}
+use_log <- all(Y > 0, na.rm = TRUE)
+Z <- if (use_log) log(Y) else Y
+
+# Suggested differencing from ADF and KPSS
+nd_adf <- forecast::ndiffs(Z, alpha = 0.05, test = "adf")
+nd_kpss <- forecast::ndiffs(Z, alpha = 0.05, test = "kpss")
+d <- max(nd_adf, nd_kpss)
+
+X <- diff(Z, differences = d)
+
+adf_Z <- tseries::adf.test(Z)
+kpss_Z <- tseries::kpss.test(Z, null = "Level")
+
+adf_X <- tseries::adf.test(X)
+kpss_X <- tseries::kpss.test(X, null = "Level")
+
+list(
+  use_log = use_log,
+  d_adf = nd_adf,
+  d_kpss = nd_kpss,
+  d_chosen = d,
+  adf_Z_p = adf_Z$p.value,
+  kpss_Z_p = kpss_Z$p.value,
+  adf_X_p = adf_X$p.value,
+  kpss_X_p = kpss_X$p.value
+)
+```
+
+We define the stationary series as $X_t = \nabla^d Z_t$ where $Z_t = \log Y_t$ if all values are positive, otherwise $Z_t = Y_t$. This choice is justified by the unit-root tests above (ADF should reject non-stationarity and KPSS should not reject stationarity on $X_t$).
+
+## 3. Graphical representation before and after transformation
+
+```{r plots-part1, fig.width=8, fig.height=5}
+autoplot(Y) +
+  labs(title = "Raw series Y_t", x = "Time", y = "Index")
+```
+
+```{r plots-part1b, fig.width=8, fig.height=5}
+autoplot(X) +
+  labs(title = "Stationary series X_t", x = "Time", y = "Transformed index")
+```
+
+# Part II: ARMA models
+
+## 4. Pick and estimate an ARMA(p,q) model for $X_t$
+
+We use ACF/PACF diagnostics and an information-criterion search on a small grid to select a parsimonious ARMA model.
+
+```{r acf-pacf, fig.width=8, fig.height=5}
+ggAcf(X, lag.max = 36) + labs(title = "ACF of X_t")
+```
+
+```{r pacf, fig.width=8, fig.height=5}
+ggPacf(X, lag.max = 36) + labs(title = "PACF of X_t")
+```
+
+```{r arma-grid}
+max_p <- 5
+max_q <- 5
+
+grid <- expand.grid(p = 0:max_p, q = 0:max_q) %>%
+  rowwise() %>%
+  mutate(
+    fit = list(tryCatch(
+      Arima(X, order = c(p, 0, q), include.mean = TRUE),
+      error = function(e) NULL
+    )),
+    aic = ifelse(is.null(fit), NA, AIC(fit)),
+    bic = ifelse(is.null(fit), NA, BIC(fit))
+  ) %>%
+  ungroup() %>%
+  arrange(aic)
+
+grid %>%
+  filter(!is.na(aic)) %>%
+  head(8) %>%
+  kable()
+
+best_row <- grid %>% filter(!is.na(aic)) %>% slice(1)
+best_fit <- best_row$fit[[1]]
+best_row
+```
+
+We select the model with the lowest AIC among feasible candidates. The estimated parameters are:
+
+```{r arma-summary}
+summary(best_fit)
+```
+
+### Diagnostic checks
+
+We validate the fitted model via residual autocorrelation, Ljung-Box test, and a Gaussianity check.
+
+```{r residual-checks, fig.width=8, fig.height=5}
+checkresiduals(best_fit)
+```
+
+```{r jb-test}
+res <- residuals(best_fit)
+list(
+  ljung_box = Box.test(res, lag = 24, type = "Ljung-Box"),
+  jarque_bera = tseries::jarque.bera.test(res)
+)
+```
+
+If residual diagnostics are satisfactory (no significant autocorrelation, approximate normality), the model is considered valid.
+
+## 5. Write the ARIMA(p,d,q) model for the chosen series
+
+Let $Z_t$ be the transformed series (log if used) and $X_t = \nabla^d Z_t$ be the stationary series. If the selected ARMA model is ARMA$(p,q)$ for $X_t$, then the original series follows an ARIMA$(p,d,q)$ model for $Z_t$. If $Z_t = \log Y_t$, this corresponds to an ARIMA$(p,d,q)$ for the log series, which implies a multiplicative structure on $Y_t$.
+
+# Part III: Prediction
+
+Denote $T$ the length of the series. We assume the residuals are Gaussian.
+
+## 6. Confidence region for $(X_{T+1}, X_{T+2})$
+
+Let $\hat{\mu} = (\hat{X}_{T+1}, \hat{X}_{T+2})^\top$ be the 2-step-ahead forecast mean vector and $\hat{\Sigma}$ the 2x2 forecast error covariance matrix. Under Gaussian residuals, the joint forecast error is bivariate normal, so the level-$\alpha$ confidence region is the ellipse
+
+$$
+\mathcal{C}_\alpha = \left\{ x \in \mathbb{R}^2 : (x - \hat{\mu})^\top \hat{\Sigma}^{-1} (x - \hat{\mu}) \le \chi^2_{2,\alpha} \right\}.
+$$
+
+For an ARMA model, let $\{\psi_j\}_{j\ge 0}$ be the coefficients of the MA($\infty$) representation. Then
+
+- $\operatorname{Var}(X_{T+1} - \hat{X}_{T+1}) = \sigma^2$,
+- $\operatorname{Var}(X_{T+2} - \hat{X}_{T+2}) = \sigma^2 (1 + \psi_1^2)$,
+- $\operatorname{Cov}(X_{T+1} - \hat{X}_{T+1}, X_{T+2} - \hat{X}_{T+2}) = \sigma^2 \psi_1$,
+
+where $\sigma^2$ is the innovation variance.
+
+## 7. Hypotheses used to obtain this region
+
+1. The ARMA model for $X_t$ is correctly specified.
+2. Innovations are i.i.d. Gaussian with variance $\sigma^2$.
+3. Model parameters are treated as known (estimation uncertainty ignored for the region).
+4. The process is stationary and invertible (so the MA($\infty$) representation exists).
+
+## 8. Graphical representation for $\alpha = 95\%$
+
+```{r region-plot, fig.width=7, fig.height=6}
+alpha <- 0.95
+
+pred <- predict(best_fit, n.ahead = 2)
+mu <- as.numeric(pred$pred)
+
+# Extract AR and MA coefficients for psi1
+ar <- if (!is.null(best_fit$model$phi)) best_fit$model$phi else numeric(0)
+ma <- if (!is.null(best_fit$model$theta)) best_fit$model$theta else numeric(0)
+psi1 <- if (length(ar) == 0 && length(ma) == 0) 0 else ARMAtoMA(ar, ma, lag.max = 1)[1]
+
+sigma2 <- best_fit$sigma2
+Sigma <- matrix(
+  c(sigma2, sigma2 * psi1, sigma2 * psi1, sigma2 * (1 + psi1^2)),
+  nrow = 2
+)
+
+ell <- as.data.frame(ellipse::ellipse(Sigma, centre = mu, level = alpha))
+colnames(ell) <- c("X_T1", "X_T2")
+
+corr12 <- Sigma[1, 2] / sqrt(Sigma[1, 1] * Sigma[2, 2])
+
+p <- ggplot(ell, aes(x = X_T1, y = X_T2)) +
+  geom_path(color = "steelblue", linewidth = 1) +
+  geom_point(aes(x = mu[1], y = mu[2]), color = "firebrick", size = 2) +
+  labs(
+    title = "95% joint prediction region for (X_{T+1}, X_{T+2})",
+    x = "X_{T+1}",
+    y = "X_{T+2}"
+  ) +
+  theme_minimal()
+
+p
+corr12
+```
+
+**Comment:** the ellipse orientation reflects the sign of the correlation between forecast errors at horizons 1 and 2. A positive correlation yields an ellipse tilted upward; a negative correlation yields a downward tilt. The size increases with $\sigma^2$ and with $|\psi_1|$.
+
+## 9. Open question
+
+Let $Y_t$ be a stationary time series observed from $t = 1$ to $T$, and suppose $Y_{T+1}$ is observed before $X_{T+1}$. Using $Y_{T+1}$ improves the prediction of $X_{T+1}$ if and only if $Y_{T+1}$ contains incremental predictive information about $X_{T+1}$ beyond the sigma-field generated by $\{X_1, \ldots, X_T\}$. Formally, if
+
+$$
+\mathbb{E}[X_{T+1} \mid X_1, \ldots, X_T, Y_{T+1}] \ne \mathbb{E}[X_{T+1} \mid X_1, \ldots, X_T],
+$$
+
+then including $Y_{T+1}$ improves the forecast in mean-square error.
+
+A practical test is to estimate an ARMAX-type model for $X_t$ with $Y_{t}$ (or a proxy for $Y_{T+1}$ if only available at $T+1$) and test the significance of the coefficient(s) on $Y$. This can be done via a t-test on the added regressor(s), or a likelihood-ratio test comparing the ARMA model for $X_t$ against the ARMAX model.
