@@ -2,13 +2,12 @@
 title: "Time Series Project: IPI Food Industries"
 output:
   pdf_document:
-    toc: true
-    toc_depth: 2
+    toc: false
     number_sections: true
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 required_pkgs <- c(
   "readr", "dplyr", "ggplot2", "lubridate",
@@ -34,9 +33,15 @@ library(knitr)
 
 ## 1. What does the chosen series represent?
 
-This dataset is an Industrial Production Index (IPI) for the food industries sector in France, monthly frequency, seasonally and working-day adjusted (CVS-CJO), base 100 in 2021. The variable is an index, so it is unit-free. Because the series is already CVS-CJO, I do not apply additional seasonal adjustment.
+The dataset is an Industrial Production Index (IPI) for the food industries sector in France, with monthly frequency, seasonally and working-day adjusted (CVS-CJO), base 100 in 2021. The variable is an index and is unit-free. Since the series is already CVS-CJO, we do not apply additional seasonal adjustment.
 
-```{r read-metadata}
+**Modelling context.**
+
+- As an index (base 100 in 2021), values above (below) 100 indicate production above (below) its 2021 average level for the sector.
+- The CVS-CJO correction removes most deterministic seasonal patterns and calendar effects; consequently, we do not expect pronounced remaining seasonality and we focus on non-seasonal ARIMA/ARMA dynamics.
+- Because the index is strictly positive over the sample, the analysis can be carried out on $Z_t = \log(Y_t)$; first differences of $Z_t$ have a growth-rate interpretation and often provide variance stabilization.
+
+```{r read-metadata, include=FALSE}
 meta_candidates <- list.files("data", pattern = "caract", full.names = TRUE)
 if (length(meta_candidates) == 0) {
   stop("Metadata file not found in data/.")
@@ -74,13 +79,12 @@ meta %>%
   kable()
 ```
 
-Note: if column names in the metadata file contain accents on your machine, the table above may require manual renaming, but the content is the same.
 
 ## 2. Transform the series to make it stationary if necessary
 
 We read the monthly values file, which contains multiple vintages. Each vintage is stored as a pair of columns: a value column followed by a code column (A, P, R, etc.). The row labeled "Mises a jour" gives the update date for each vintage. We select the most recent vintage by default.
 
-```{r read-series}
+```{r read-series, include=FALSE}
 values_path <- file.path("data", "valeurs_mensuelles.csv")
 raw <- read_delim(
   values_path,
@@ -136,7 +140,7 @@ summary(series_raw$value)
 
 We consider a log transform if all values are strictly positive. Then we determine the number of differences needed using unit-root tests and verify stationarity with ADF and KPSS.
 
-```{r stationarity}
+```{r stationarity, include=FALSE}
 use_log <- all(Y > 0, na.rm = TRUE)
 Z <- if (use_log) log(Y) else Y
 
@@ -165,19 +169,29 @@ list(
 )
 ```
 
-We define the stationary series as $X_t = \nabla^d Z_t$ where $Z_t = \log Y_t$ if all values are positive, otherwise $Z_t = Y_t$. This choice is justified by the unit-root tests above (ADF should reject non-stationarity and KPSS should not reject stationarity on $X_t$).
+**Justification.**
+
+- **Log transform.** Since the series is strictly positive over the sample, we work with $Z_t = \log(Y_t)$. Then $\Delta Z_t = \log(Y_t) - \log(Y_{t-1}) \approx (Y_t - Y_{t-1})/Y_{t-1}$.
+- **Sample size and frequency.** The series is monthly with `r length(Y)` observations, from `r paste(start(Y), collapse = "-")` to `r paste(end(Y), collapse = "-")`. This satisfies the “at least 100 observations” requirement and is long enough for ARMA identification.
+- **Stationarity of $Z_t$.** The ADF test on $Z_t$ has p-value `r signif(adf_Z$p.value, 3)`, so it does not reject a unit root at the 5% level. The KPSS test (level-stationarity null) on $Z_t$ has p-value `r signif(kpss_Z$p.value, 3)`, so it rejects stationarity. Taken together, the tests support the presence of a stochastic trend (non-stationarity) in $Z_t$.
+- **Choosing the differencing order $d$.** `forecast::ndiffs()` suggests `r nd_adf` difference(s) under ADF and `r nd_kpss` under KPSS, hence we take the conservative choice $d = \max(d_{ADF}, d_{KPSS}) = `r d`$.
+- **Stationarity of $X_t = \nabla^d Z_t$.** After differencing, ADF on $X_t$ yields p-value `r signif(adf_X$p.value, 3)` (reject unit root) while KPSS yields p-value `r signif(kpss_X$p.value, 3)` (do not reject stationarity). This is consistent with $X_t$ being stationary.
+
+We therefore define the stationary modelling series as $X_t = \nabla^{`r d`} \log(Y_t)$.
 
 ## 3. Graphical representation before and after transformation
 
-```{r plots-part1, fig.width=8, fig.height=5}
-autoplot(Y) +
-  labs(title = "Raw series Y_t", x = "Time", y = "Index")
+```{r plots-part1, fig.width=7, fig.height=5}
+op <- par(mfrow = c(2, 1), mar = c(3, 4, 2, 1))
+plot(Y, main = "Raw series Y_t", xlab = "Time", ylab = "Index")
+plot(X, main = "Stationary series X_t", xlab = "Time", ylab = "Transformed index")
+par(op)
 ```
 
-```{r plots-part1b, fig.width=8, fig.height=5}
-autoplot(X) +
-  labs(title = "Stationary series X_t", x = "Time", y = "Transformed index")
-```
+**Graphical assessment.**
+
+- On the raw index $Y_t$, the level is persistent (slowly moving), which is typical of a non-stationary macro index; large macro events can create visible breaks in level and volatility.
+- On $X_t = \Delta \log(Y_t)$, the series fluctuates around a stable mean and shocks are short-lived, which is consistent with a stationary specification.
 
 # Part II: ARMA models
 
@@ -185,12 +199,16 @@ autoplot(X) +
 
 We use ACF/PACF diagnostics and an information-criterion search on a small grid to select a parsimonious ARMA model.
 
-```{r acf-pacf, fig.width=8, fig.height=5}
-ggAcf(X, lag.max = 36) + labs(title = "ACF of X_t")
-```
+**Model identification and selection.**
 
-```{r pacf, fig.width=8, fig.height=5}
-ggPacf(X, lag.max = 36) + labs(title = "PACF of X_t")
+- **Identification logic.** The ACF/PACF of $X_t$ are used as qualitative guidance: short-range dependence suggests an ARMA with relatively small orders rather than a high-order AR (pure PACF cutoff) or pure MA (pure ACF cutoff).
+- **Quantitative selection.** We then compare ARMA$(p,q)$ candidates on a grid ($0\le p,q\le 5$) and select the feasible model minimizing AIC. AIC is preferred here because the goal is forecasting/fit (it penalizes complexity less harshly than BIC).
+
+```{r acf-pacf, fig.width=7, fig.height=5}
+op <- par(mfrow = c(2, 1), mar = c(3, 4, 2, 1))
+forecast::Acf(X, lag.max = 36, main = "ACF of X_t")
+forecast::Pacf(X, lag.max = 36, main = "PACF of X_t")
+par(op)
 ```
 
 ```{r arma-grid}
@@ -212,41 +230,65 @@ grid <- expand.grid(p = 0:max_p, q = 0:max_q) %>%
 
 grid %>%
   filter(!is.na(aic)) %>%
-  head(8) %>%
+  select(p, q, aic, bic) %>%
+  head(5) %>%
   kable()
 
 best_row <- grid %>% filter(!is.na(aic)) %>% slice(1)
 best_fit <- best_row$fit[[1]]
-best_row
+best_row %>% select(p, q, aic, bic) %>% kable()
 ```
 
-We select the model with the lowest AIC among feasible candidates. The estimated parameters are:
+We select the model with the lowest AIC among feasible candidates, which yields ARMA($p=`r best_row$p`, q=`r best_row$q`$) for $X_t$. The estimated parameters are:
 
 ```{r arma-summary}
-summary(best_fit)
+coef <- best_fit$coef
+se <- sqrt(diag(best_fit$var.coef))
+coef_tbl <- tibble::tibble(
+  term = names(coef),
+  estimate = unname(coef),
+  std_error = unname(se),
+  t_value = unname(coef / se)
+) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+coef_tbl %>% kable()
 ```
 
 ### Diagnostic checks
 
 We validate the fitted model via residual autocorrelation, Ljung-Box test, and a Gaussianity check.
 
-```{r residual-checks, fig.width=8, fig.height=5}
-checkresiduals(best_fit)
+```{r residual-checks, fig.width=7, fig.height=4}
+checkresiduals(best_fit, test = FALSE)
 ```
 
-```{r jb-test}
+```{r jb-test, include=FALSE}
 res <- residuals(best_fit)
-list(
-  ljung_box = Box.test(res, lag = 24, type = "Ljung-Box"),
-  jarque_bera = tseries::jarque.bera.test(res)
-)
+lb_test <- Box.test(res, lag = 24, type = "Ljung-Box", fitdf = sum(best_fit$arma[1:4]))
+jb_test <- tseries::jarque.bera.test(res)
 ```
 
-If residual diagnostics are satisfactory (no significant autocorrelation, approximate normality), the model is considered valid.
+**Residual diagnostics.**
+
+- **Whiteness.** The Ljung–Box test checks for remaining autocorrelation in residuals. A non-significant p-value supports the ARMA adequacy (no leftover linear dependence).
+- **Gaussianity.** The Jarque–Bera test is a strict check for normality. For many macro series, residuals can be non-Gaussian because of outliers (e.g., crisis months), which affects distributional statements (prediction intervals/regions) more than point forecasts.
+- **Here (numbers).** Ljung–Box at lag 24 (df adjusted) gives p-value `r signif(lb_test$p.value, 3)`, and Jarque–Bera gives p-value `r signif(jb_test$p.value, 3)`.
+
+Overall, the model is considered acceptable for linear dependence if residual autocorrelation is not significant; the Gaussian assumption used later for the confidence region should be interpreted as an approximation if normality is rejected.
 
 ## 5. Write the ARIMA(p,d,q) model for the chosen series
 
 Let $Z_t$ be the transformed series (log if used) and $X_t = \nabla^d Z_t$ be the stationary series. If the selected ARMA model is ARMA$(p,q)$ for $X_t$, then the original series follows an ARIMA$(p,d,q)$ model for $Z_t$. If $Z_t = \log Y_t$, this corresponds to an ARIMA$(p,d,q)$ for the log series, which implies a multiplicative structure on $Y_t$.
+
+**ARIMA representation.** With $d = `r d`$ and the selected ARMA($p=`r best_row$p`, q=`r best_row$q`$) for $X_t = \nabla^d Z_t$, the model can be written as
+
+$$
+\phi(B)\,\nabla^{d} Z_t = c + \theta(B)\,\varepsilon_t,\qquad \varepsilon_t \sim \text{i.i.d. } (0,\sigma^2),
+$$
+
+where $\phi(B)=1-\phi_1B-\cdots-\phi_pB^p$ and $\theta(B)=1+\theta_1B+\cdots+\theta_qB^q$.
+When $Z_t=\log(Y_t)$ and $d=1$, a non-zero mean in $X_t$ corresponds to a **drift** in $\log(Y_t)$, i.e., a constant average growth component.
 
 # Part III: Prediction
 
@@ -268,6 +310,8 @@ For an ARMA model, let $\{\psi_j\}_{j\ge 0}$ be the coefficients of the MA($\inf
 
 where $\sigma^2$ is the innovation variance.
 
+**Interpretation.** This region is the multivariate analogue of a univariate prediction interval: it is a joint set such that $\mathbb{P}((X_{T+1},X_{T+2})\in\mathcal{C}_\alpha)\approx \alpha$ under the model. The chi-square threshold comes from the quadratic form of a bivariate normal vector. In practice, if residuals are heavier-tailed than Gaussian, the ellipse may be too small (undercoverage).
+
 ## 7. Hypotheses used to obtain this region
 
 1. The ARMA model for $X_t$ is correctly specified.
@@ -275,9 +319,15 @@ where $\sigma^2$ is the innovation variance.
 3. Model parameters are treated as known (estimation uncertainty ignored for the region).
 4. The process is stationary and invertible (so the MA($\infty$) representation exists).
 
+**Role of the assumptions.**
+
+- If the ARMA is misspecified, $\hat\Sigma$ is wrong and the region is not calibrated.
+- Gaussianity is what makes the contour exactly elliptical with a chi-square cutoff; without it, ellipses are at best an approximation.
+- Treating parameters as known ignores estimation uncertainty and typically makes the region slightly too optimistic; this effect is non-negligible in small samples but tends to shrink as $T$ grows.
+
 ## 8. Graphical representation for $\alpha = 95\%$
 
-```{r region-plot, fig.width=7, fig.height=6}
+```{r region-plot, fig.width=6.5, fig.height=5}
 alpha <- 0.95
 
 pred <- predict(best_fit, n.ahead = 2)
@@ -310,10 +360,13 @@ p <- ggplot(ell, aes(x = X_T1, y = X_T2)) +
   theme_minimal()
 
 p
-corr12
 ```
 
-**Comment:** the ellipse orientation reflects the sign of the correlation between forecast errors at horizons 1 and 2. A positive correlation yields an ellipse tilted upward; a negative correlation yields a downward tilt. The size increases with $\sigma^2$ and with $|\psi_1|$.
+**Comments on the 95% region.**
+
+- The forecast-error correlation is `r signif(corr12, 3)`, i.e., **negative**: a positive error at horizon 1 tends to be associated with a negative error at horizon 2 under the fitted ARMA dynamics.
+- Using $\rho = \psi_1/\sqrt{1+\psi_1^2}$, this corresponds to $\psi_1 \approx \rho/\sqrt{1-\rho^2}$, hence here $\psi_1 \approx `r signif(corr12 / sqrt(1 - corr12^2), 3)`$.
+- The ellipse is therefore tilted downward; its size is governed by the innovation variance $\sigma^2 = `r signif(sigma2, 3)`$ (on the $X_t$ scale) and by $|\psi_1|$.
 
 ## 9. Open question
 
@@ -326,3 +379,20 @@ $$
 then including $Y_{T+1}$ improves the forecast in mean-square error.
 
 A practical test is to estimate an ARMAX-type model for $X_t$ with $Y_{t}$ (or a proxy for $Y_{T+1}$ if only available at $T+1$) and test the significance of the coefficient(s) on $Y$. This can be done via a t-test on the added regressor(s), or a likelihood-ratio test comparing the ARMA model for $X_t$ against the ARMAX model.
+
+**Conditions and practical test.**
+
+- A convenient equivalent condition is that $Y_{T+1}$ is not conditionally independent of $X_{T+1}$ given past $X$: informally, $Y$ must have **incremental predictive content** for $X$.
+- In linear/Gaussian settings, this amounts to $Y$ being correlated with the one-step-ahead innovation (forecast error) of $X$ when conditioning on $\mathcal{F}_T=\sigma(X_1,\ldots,X_T)$.
+- Practical implementation: fit an ARMAX model $X_t = \text{ARMA terms} + \beta Y_t + \varepsilon_t$ (or a lead/nowcast proxy for $Y_{T+1}$) and test $H_0:\beta=0$ (t-test / Wald) or compare log-likelihoods (LR test). A rejection indicates that observing $Y_{T+1}$ can reduce the MSE of forecasting $X_{T+1}$.
+
+# Appendix: Code
+
+```{r appendix-code, echo=FALSE, results='asis'}
+code_chunks <- knitr::knit_code$get()
+code_text <- unlist(code_chunks, use.names = FALSE)
+
+cat("```r\n")
+cat(paste(code_text, collapse = "\n\n"))
+cat("\n```\n")
+```
