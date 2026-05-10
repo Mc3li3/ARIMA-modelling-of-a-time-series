@@ -33,7 +33,6 @@ library(tseries)
 library(forecast)
 library(knitr)
 
-d <- 1
 ```
 
 # Part I: The data
@@ -86,14 +85,14 @@ plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
 ```
 The series $Z_t$ exhibits a clear upward long-term trend, indicating that the mean is not constant over time. To remove this stochastic trend and eliminate the unit root, we apply first-order differencing ($d=1$):
 \begin{equation}
-X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1} = \nabla^{`r d`} \log(Y_t))
+X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1}) = \nabla^1 \log(Y_t))
 \end{equation}
 
 \textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
 
 
 ```{r first-difference, include=TRUE}
-X <- diff(Z, differences = d)
+X <- diff(Z, differences = 1)
 plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
@@ -196,7 +195,7 @@ Overall, the model is considered acceptable for linear dependence if residual au
 
 Let $Z_t$ be the transformed series (log if used) and $X_t = \nabla^d Z_t$ be the stationary series. If the selected ARMA model is ARMA$(p,q)$ for $X_t$, then the original series follows an ARIMA$(p,d,q)$ model for $Z_t$. If $Z_t = \log Y_t$, this corresponds to an ARIMA$(p,d,q)$ for the log series, which implies a multiplicative structure on $Y_t$.
 
-**ARIMA representation.** With $d = `r d`$ and the selected ARMA($p=`r best_row$p`, q=`r best_row$q`$) for $X_t = \nabla^d Z_t$, the model can be written as
+**ARIMA representation.** With $d = 1$ and the selected ARMA($p=`r best_row$p`, q=`r best_row$q`$) for $X_t = \nabla^d Z_t$, the model can be written as
 
 $$
 \phi(B)\,\nabla^{d} Z_t = c + \theta(B)\,\varepsilon_t,\qquad \varepsilon_t \sim \text{i.i.d. } (0,\sigma^2),
