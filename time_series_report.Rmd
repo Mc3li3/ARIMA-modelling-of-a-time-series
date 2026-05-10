@@ -203,21 +203,28 @@ Denote $T$ the length of the series. We assume the residuals are Gaussian.
 
 ## 6. Confidence region for $(X_{T+1}, X_{T+2})$
 
-Let $\hat{\mu} = (\hat{X}_{T+1}, \hat{X}_{T+2})^\top$ be the 2-step-ahead forecast mean vector and $\hat{\Sigma}$ the 2x2 forecast error covariance matrix. Under Gaussian residuals, the joint forecast error is bivariate normal, so the level-$\alpha$ confidence region is the ellipse
+Let $\hat{\mu} = (\hat{X}_{T+1}, \hat{X}_{T+2})^\top$ be the 2-step-ahead point forecast mean vector, and $\hat{\Sigma}$ the $2 \times 2$ forecast error covariance matrix, which quantifies both the uncertainty at each horizon and the correlation between them.
+
+Under the assumption of strictly Gaussian residuals, any linear combination of these residuals remains Gaussian. Consequently, the joint forecast error follows a bivariate normal distribution: $(X_{T+1}, X_{T+2})^T - \hat{\mu} \sim \mathcal{N}_2(\mathbf{0}, \hat{\Sigma})$.
+
+According to the properties of multivariate Gaussian vectors, the standardized quadratic form follows a Chi-squared distribution with 2 degrees of freedom. Therefore, the level-$\alpha$ confidence region takes the shape of an ellipse centered on $\hat{\mu}$:
 
 $$
-\mathcal{C}_\alpha = \left\{ x \in \mathbb{R}^2 : (x - \hat{\mu})^\top \hat{\Sigma}^{-1} (x - \hat{\mu}) \le \chi^2_{2,\alpha} \right\}.
+\mathcal{C}_\alpha = \left\{ x \in \mathbb{R}^2 : (x - \hat{\mu})^\top \hat{\Sigma}^{-1} (x - \hat{\mu}) \le \chi^2_{2,\alpha} \right\}
 $$
 
-For an ARMA model, let $\{\psi_j\}_{j\ge 0}$ be the coefficients of the MA($\infty$) representation. Then
+where $\chi^2_{2,\alpha}$ is the quantile of order $\alpha$ of the $\chi^2$ distribution with 2 degrees of freedom.
 
-- $\operatorname{Var}(X_{T+1} - \hat{X}_{T+1}) = \sigma^2$,
-- $\operatorname{Var}(X_{T+2} - \hat{X}_{T+2}) = \sigma^2 (1 + \psi_1^2)$,
-- $\operatorname{Cov}(X_{T+1} - \hat{X}_{T+1}, X_{T+2} - \hat{X}_{T+2}) = \sigma^2 \psi_1$,
+For a stationary ARMA model, we use its MA($\infty$) representation with coefficients $\{\psi_j\}_{j\ge 0}$ ($\psi_0=1$) to compute the elements of $\hat{\Sigma}$. Since forecast errors are strictly composed of future, unobserved innovations $\epsilon_t$, we obtain:
 
-where $\sigma^2$ is the innovation variance.
+- $\operatorname{Var}(X_{T+1} - \hat{X}_{T+1}) = \sigma^2$.
+- $\operatorname{Var}(X_{T+2} - \hat{X}_{T+2}) = \sigma^2 (1 + \psi_1^2)$.
+- $\operatorname{Cov}(X_{T+1} - \hat{X}_{T+1}, X_{T+2} - \hat{X}_{T+2}) = \sigma^2 \psi_1$.
 
-**Interpretation.** This region is the multivariate analogue of a univariate prediction interval: it is a joint set such that $\mathbb{P}((X_{T+1},X_{T+2})\in\mathcal{C}_\alpha)\approx \alpha$ under the model. The chi-square threshold comes from the quadratic form of a bivariate normal vector. In practice, if residuals are heavier-tailed than Gaussian, the ellipse may be too small (undercoverage).
+where $\sigma^2$ is the constant variance of the white noise innovations. This gives us the form of $\hat{\Sigma}$ :
+$$
+\hat{\Sigma} = \sigma^2 \begin{pmatrix} 1 & \psi_1 \\ \psi_1 & 1 + \psi_1^2 \end{pmatrix}
+$$
 
 ## 7. Hypotheses used to obtain this region
 
