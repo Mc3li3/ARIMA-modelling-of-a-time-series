@@ -3,7 +3,7 @@ title: "Time Series Project: IPI Food Industries"
 output:
   pdf_document:
     toc: false
-    number_sections: true
+    number_sections: false
 ---
 
 ```{r setup, include=FALSE}
