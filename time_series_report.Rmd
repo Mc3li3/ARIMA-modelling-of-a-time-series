@@ -235,17 +235,16 @@ $$
 
 ## 7. Hypotheses used to obtain this region
 
-1. The ARMA model for $X_t$ is correctly specified.
-2. Innovations are i.i.d. Gaussian with variance $\sigma^2$.
-3. Model parameters are treated as known (estimation uncertainty ignored for the region).
-4. The process is stationary and invertible (so the MA($\infty$) representation exists).
+To derive the exact elliptical confidence region $\mathcal{C}_\alpha$, four hypotheses are required:
 
-**Role of the assumptions.**
+1. **Correct specification of the ARMA model:** We assume the true Data Generating Process follows the postulated ARMA$(p,q)$ structure. This ensures the theoretical MA($\infty$) coefficients $\psi_j$ are correct, which is necessary to compute a valid conditional forecast vector $\hat{\mu}$ and covariance matrix $\hat{\Sigma}$.
 
-- If the ARMA is misspecified, $\hat\Sigma$ is wrong and the region is not calibrated.
-- Gaussianity is what makes the contour exactly elliptical with a chi-square cutoff; without it, ellipses are at best an approximation.
-- Treating parameters as known ignores estimation uncertainty and typically makes the region slightly too optimistic; this effect is non-negligible in small samples but tends to shrink as $T$ grows.
+2. **Strong White Noise (i.i.d. Gaussian innovations):** The unobserved shocks $(\epsilon_t)_{t \in \mathbb{Z}}$ are assumed to be independent and identically distributed according to a Gaussian distribution $\mathcal{N}(0, \sigma^2)$. This ensures the joint forecast error is bivariate normal, allowing the standardized quadratic form to follow a $\chi^2_2$ distribution. Without it, particularly if empirical innovations have heavier tails, the theoretical ellipse will underestimate the true risk.
 
+3. **Parameters are treated as known:** The derivation relies on the parameters $(\phi, \theta, \sigma^2)$ being treated as fixed constants, ignoring the sampling variability of their empirical estimators $(\hat{\phi}, \hat{\theta}, \hat{\sigma}^2)$. This simplification makes the theoretical region slightly too narrow in small samples, but the effect becomes asymptotically negligible as the sample size $T$ grows.
+
+4. **Stationarity and Invertibility:** We require all roots of the autoregressive polynomial $\Phi(z)$ and the moving average polynomial $\Theta(z)$ to lie outside the unit circle. Stationarity guarantees the existence of the Wold representation with a finite variance ($\sum \psi_j^2 < \infty$), while invertibility allows us to express the unobserved innovations in terms of the observable past sequence $\{X_t, X_{t-1}, \dots\}$, making the forecast computable.
+  
 ## 8. Graphical representation for $\alpha = 95\%$
 
 ```{r region-plot, fig.width=6.5, fig.height=5}
