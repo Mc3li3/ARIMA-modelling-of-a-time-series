@@ -8,11 +8,11 @@ geometry: "margin=1.5cm"
 ---
 
 
-```{r setup, include=TRUE}
+```{r setup, include=TRUE, echo=FALSE, warning=FALSE, message=FALSE}
 knitr::opts_chunk$set(
-  echo = TRUE,
-  warning = TRUE,
-  message = TRUE,
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
   fig.align = "center",
   fig.width = 5,
   fig.height = 2.8,
@@ -94,13 +94,13 @@ X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1}
 \textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
 
 
-```{r first-difference, include=TRUE}
+```{r first-difference}
 X <- diff(Z, differences = 1)
 plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
 
-```{r stationarity-tests, include=TRUE}
+```{r stationarity-tests}
 adf.test(X)
 kpss.test(X)
 ```
