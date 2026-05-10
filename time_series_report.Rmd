@@ -35,7 +35,6 @@ library(tseries)
 library(forecast)
 library(knitr)
 
-d <- 1
 ```
 
 # Part I: The data
