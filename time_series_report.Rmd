@@ -6,11 +6,12 @@ output:
     number_sections: true
 ---
 
-```{r setup, include=FALSE}
+
+```{r setup, include=TRUE}
 knitr::opts_chunk$set(
   echo = TRUE,
-  warning = FALSE,
-  message = FALSE,
+  warning = TRUE,
+  message = TRUE,
   fig.align = "center",
   fig.width = 10,
   fig.height = 6
@@ -31,6 +32,8 @@ library(ggplot2)
 library(tseries)
 library(forecast)
 library(knitr)
+
+d <- 1
 ```
 
 # Part I: The data
@@ -77,7 +80,7 @@ Z_t = \ln(Y_t)
 \end{equation}
 \textbf{Justification:} This transformation stabilizes the variance and converts multiplicative growth patterns into additive ones. Economically, the first difference of the logged series approximates the monthly growth rate, a standard metric for industrial production analysis.
 
-```{r read-series, include=TRUE}
+```{r log-transform, include=TRUE}
 Z <- log(Y)
 plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
 ```
@@ -89,13 +92,13 @@ X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1} = \nabla^{`r d`} \log(Y_t))
 \textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
 
 
-```{r read-series, include=TRUE}
-X <- diff(Z)
+```{r first-difference, include=TRUE}
+X <- diff(Z, differences = d)
 plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
 
-```{r read-series, include=TRUE}
+```{r stationarity-tests, include=TRUE}
 adf.test(X)
 kpss.test(X)
 ```
