@@ -7,11 +7,12 @@ output:
 geometry: "margin=1.5cm"
 ---
 
-```{r setup, include=FALSE}
+
+```{r setup, include=TRUE}
 knitr::opts_chunk$set(
   echo = TRUE,
-  warning = FALSE,
-  message = FALSE,
+  warning = TRUE,
+  message = TRUE,
   fig.align = "center",
   fig.width = 5,
   fig.height = 2.8,
@@ -33,6 +34,8 @@ library(ggplot2)
 library(tseries)
 library(forecast)
 library(knitr)
+
+d <- 1
 ```
 
 # Part I: The data
@@ -79,7 +82,7 @@ Z_t = \ln(Y_t)
 \end{equation}
 \textbf{Justification:} This transformation stabilizes the variance and converts multiplicative growth patterns into additive ones. Economically, the first difference of the logged series approximates the monthly growth rate, a standard metric for industrial production analysis.
 
-```{r, echo=FALSE}
+```{r log-transform, include=TRUE}
 Z <- log(Y)
 plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
 ```
@@ -97,7 +100,7 @@ plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
 
-```{r, echo=FALSE}
+```{r stationarity-tests, include=TRUE}
 adf.test(X)
 kpss.test(X)
 ```
