@@ -4,6 +4,7 @@ output:
   pdf_document:
     toc: false
     number_sections: false
+geometry: "margin=1.5cm"
 ---
 
 ```{r setup, include=FALSE}
@@ -12,8 +13,8 @@ knitr::opts_chunk$set(
   warning = FALSE,
   message = FALSE,
   fig.align = "center",
-  fig.width = 10,
-  fig.height = 6,
+  fig.width = 5,
+  fig.height = 2.8,
   out.width = "100%"
 )
 
@@ -51,7 +52,7 @@ The dataset is an Industrial Production Index (IPI) for the food industries sect
 ## 2 and 3. Transform the series to make it stationary if necessary whith graphical representation before and after transformation (placed here for convenience of the study)
 
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 
 df <- read.csv("data/valeurs_mensuelles.csv", sep = ";", skip = 4, header = FALSE, stringsAsFactors = FALSE)
 
@@ -78,7 +79,7 @@ Z_t = \ln(Y_t)
 \end{equation}
 \textbf{Justification:} This transformation stabilizes the variance and converts multiplicative growth patterns into additive ones. Economically, the first difference of the logged series approximates the monthly growth rate, a standard metric for industrial production analysis.
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 Z <- log(Y)
 plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
 ```
@@ -90,13 +91,13 @@ X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1}
 \textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
 
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 X <- diff(Z, differences = 1)
 plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 adf.test(X)
 kpss.test(X)
 ```
@@ -114,7 +115,7 @@ To select, estimate, and validate your ARMA model for the stationary series $X_t
 
 We examine the Autocorrelation Function (ACF) and the Partial Autocorrelation Function (PACF) of $X_t$
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 par(mfrow = c(1, 2))
 Acf(X, main = "ACF of Xt")
 Pacf(X, main = "PACF of Xt")
@@ -124,7 +125,7 @@ best_model <- auto.arima(X, stationary = TRUE, seasonal = FALSE,
 ```
 Based on the visual inspection of the ACF and PACF, as well as the minimization of the AIC, an \textbf{ARMA(1,1)} model was selected for the stationary series $X_t$.
 
-```{r arma-grid}
+```{r arma-grid, echo=FALSE}
 fit <- Arima(X, order = c(best_model$arma[1], 0, best_model$arma[2]), include.mean = TRUE)
 summary(fit)
 
@@ -142,11 +143,11 @@ kable(coef_table, digits = 4, caption = "Estimated ARMA Parameters")
 * The **MA(1)** coefficient ($\theta_1 = -0.7397$) is highly significant ($t \approx -13.6$), capturing the strong mean-reverting nature of the production shocks.
 * The constant term is not statistically significant ($p > 0.05$), which is common for differenced industrial indices.
 
-```{r, include=TRUE}
+```{r, echo=FALSE}
 # Residual Diagnostics
 checkresiduals(fit)
 
-# Formal Ljung-Box test
+# Ljung-Box test
 lb_test <- Box.test(residuals(fit), lag = 10, type = "Ljung-Box")
 print(lb_test)
 ```
