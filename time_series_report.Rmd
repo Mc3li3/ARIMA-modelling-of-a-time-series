@@ -50,7 +50,7 @@ The dataset is an Industrial Production Index (IPI) for the food industries sect
 ## 2 and 3. Transform the series to make it stationary if necessary whith graphical representation before and after transformation (placed here for convenience of the study)
 
 
-```{r read-series, include=TRUE}
+```{r, include=TRUE}
 
 df <- read.csv("data/valeurs_mensuelles.csv", sep = ";", skip = 4, header = FALSE, stringsAsFactors = FALSE)
 
@@ -77,25 +77,25 @@ Z_t = \ln(Y_t)
 \end{equation}
 \textbf{Justification:} This transformation stabilizes the variance and converts multiplicative growth patterns into additive ones. Economically, the first difference of the logged series approximates the monthly growth rate, a standard metric for industrial production analysis.
 
-```{r read-series, include=TRUE}
+```{r, include=TRUE}
 Z <- log(Y)
 plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
 ```
 The series $Z_t$ exhibits a clear upward long-term trend, indicating that the mean is not constant over time. To remove this stochastic trend and eliminate the unit root, we apply first-order differencing ($d=1$):
 \begin{equation}
-X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1} = \nabla^{`r d`} \log(Y_t))
+X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1}
 \end{equation}
 
 \textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
 
 
-```{r read-series, include=TRUE}
-X <- diff(Z)
+```{r, include=TRUE}
+X <- diff(Z, differences = 1)
 plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
 ```
 To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
 
-```{r read-series, include=TRUE}
+```{r, include=TRUE}
 adf.test(X)
 kpss.test(X)
 ```
