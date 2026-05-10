@@ -32,51 +32,8 @@ library(knitr)
 #' # Part I: The data
 #' 
 #' ## 1. What does the chosen series represent?
-#' 
-#' The dataset is an Industrial Production Index (IPI) for the food industries sector in France, with monthly frequency, seasonally and working-day adjusted (CVS-CJO), base 100 in 2021. The variable is an index and is unit-free. Since the series is already CVS-CJO, we do not apply additional seasonal adjustment.
-#' 
-#' **Modelling context.**
-#' 
-#' - As an index (base 100 in 2021), values above (below) 100 indicate production above (below) its 2021 average level for the sector.
-#' - The CVS-CJO correction removes most deterministic seasonal patterns and calendar effects; consequently, we do not expect pronounced remaining seasonality and we focus on non-seasonal ARIMA/ARMA dynamics.
-#' - Because the index is strictly positive over the sample, the analysis can be carried out on $Z_t = \log(Y_t)$; first differences of $Z_t$ have a growth-rate interpretation and often provide variance stabilization.
-#' 
-## ----read-metadata, include=FALSE---------------------------------------------
-meta_candidates <- list.files("data", pattern = "caract", full.names = TRUE)
-if (length(meta_candidates) == 0) {
-  stop("Metadata file not found in data/.")
-}
-meta_path <- meta_candidates[1]
-meta <- read_delim(
-  meta_path,
-  delim = ";",
-  col_names = TRUE,
-  show_col_types = FALSE
-)
-names_norm <- iconv(names(meta), from = "", to = "ASCII//TRANSLIT")
-pick_col <- function(pattern) {
-  idx <- which(grepl(pattern, names_norm, ignore.case = TRUE))
-  if (length(idx) == 0) return(NA_character_)
-  names(meta)[idx[1]]
-}
+#'       You'll find the answer in the PDF report.
 
-cols <- c(
-  pick_col("idbank"),
-  pick_col("mise"),
-  pick_col("period"),
-  pick_col("unit"),
-  pick_col("activ"),
-  pick_col("correct"),
-  pick_col("indicat"),
-  pick_col("zone"),
-  pick_col("base")
-)
-cols <- cols[!is.na(cols)]
-
-meta %>%
-  slice(1) %>%
-  select(all_of(cols)) %>%
-  kable()
 
 #' 
 #' 

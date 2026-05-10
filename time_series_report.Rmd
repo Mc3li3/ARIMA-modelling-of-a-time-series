@@ -7,25 +7,29 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6
+)
 
 required_pkgs <- c(
-  "readr", "dplyr", "ggplot2", "lubridate",
+  "readr", "dplyr", "ggplot2", "lubridate", 
   "forecast", "tseries", "ellipse", "knitr"
 )
+
 missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing_pkgs) > 0) {
-  options(repos = c(CRAN = "https://cloud.r-project.org"))
-  install.packages(missing_pkgs)
+  install.packages(missing_pkgs, repos = "https://cloud.r-project.org")
 }
 
-library(readr)
 library(dplyr)
 library(ggplot2)
-library(lubridate)
-library(forecast)
 library(tseries)
-library(ellipse)
+library(forecast)
 library(knitr)
 ```
 
@@ -33,165 +37,73 @@ library(knitr)
 
 ## 1. What does the chosen series represent?
 
-The dataset is an Industrial Production Index (IPI) for the food industries sector in France, with monthly frequency, seasonally and working-day adjusted (CVS-CJO), base 100 in 2021. The variable is an index and is unit-free. Since the series is already CVS-CJO, we do not apply additional seasonal adjustment.
+The dataset is an Industrial Production Index (IPI) for the food industries sector in France, with monthly frequency, seasonally and working-day adjusted (CVS-CJO), based at 100 in 2021. The variable is an index and is unit-free. Since the series is already CVS-CJO, we do not apply additional seasonal adjustment.
 
 **Modelling context.**
 
-- As an index (base 100 in 2021), values above (below) 100 indicate production above (below) its 2021 average level for the sector.
+- As an index (based at 100 in 2021), values above (below) 100 indicate production above (below) its 2021 average level for the sector.
 - The CVS-CJO correction removes most deterministic seasonal patterns and calendar effects; consequently, we do not expect pronounced remaining seasonality and we focus on non-seasonal ARIMA/ARMA dynamics.
 - Because the index is strictly positive over the sample, the analysis can be carried out on $Z_t = \log(Y_t)$; first differences of $Z_t$ have a growth-rate interpretation and often provide variance stabilization.
 
-```{r read-metadata, include=FALSE}
-meta_candidates <- list.files("data", pattern = "caract", full.names = TRUE)
-if (length(meta_candidates) == 0) {
-  stop("Metadata file not found in data/.")
-}
-meta_path <- meta_candidates[1]
-meta <- read_delim(
-  meta_path,
-  delim = ";",
-  col_names = TRUE,
-  show_col_types = FALSE
-)
-names_norm <- iconv(names(meta), from = "", to = "ASCII//TRANSLIT")
-pick_col <- function(pattern) {
-  idx <- which(grepl(pattern, names_norm, ignore.case = TRUE))
-  if (length(idx) == 0) return(NA_character_)
-  names(meta)[idx[1]]
-}
 
-cols <- c(
-  pick_col("idbank"),
-  pick_col("mise"),
-  pick_col("period"),
-  pick_col("unit"),
-  pick_col("activ"),
-  pick_col("correct"),
-  pick_col("indicat"),
-  pick_col("zone"),
-  pick_col("base")
-)
-cols <- cols[!is.na(cols)]
 
-meta %>%
-  slice(1) %>%
-  select(all_of(cols)) %>%
-  kable()
+## 2 and 3. Transform the series to make it stationary if necessary whith graphical representation before and after transformation (placed here for convenience of the study)
+
+
+```{r read-series, include=TRUE}
+
+df <- read.csv("data/valeurs_mensuelles.csv", sep = ";", skip = 4, header = FALSE, stringsAsFactors = FALSE)
+
+df <- df[, 1:2]
+colnames(df) <- c("date_brute", "valeur")
+
+df <- df[df$valeur != "" & !is.na(df$valeur), ]
+
+# On ajoute "-01" pour créer un format AAAA-MM-JJ lisible par R
+df$date <- as.Date(paste0(df$date_brute, "-01"))
+df <- df[order(df$date), ]
+
+# On récupère l'année et le mois de début
+start_y <- as.numeric(format(df$date[1], "%Y"))
+start_m <- as.numeric(format(df$date[1], "%m"))
+
+Y <- ts(df$valeur, start = c(start_y, start_m), frequency = 12)
+
+plot(Y, main = "Série Y : IPI Industries Alimentaires", ylab = "Indice", col = "blue")
+```
+Visual inspection of the raw series $Y_t$ shows that the amplitude of fluctuations increases proportionally with the level of the index. To address this heteroscedasticity, we apply a natural logarithm transformation:
+\begin{equation}
+Z_t = \ln(Y_t)
+\end{equation}
+\textbf{Justification:} This transformation stabilizes the variance and converts multiplicative growth patterns into additive ones. Economically, the first difference of the logged series approximates the monthly growth rate, a standard metric for industrial production analysis.
+
+```{r read-series, include=TRUE}
+Z <- log(Y)
+plot(Z, main = "Série Z = log(Y)", ylab = "Indice", col = "green")
+```
+The series $Z_t$ exhibits a clear upward long-term trend, indicating that the mean is not constant over time. To remove this stochastic trend and eliminate the unit root, we apply first-order differencing ($d=1$):
+\begin{equation}
+X_t = \Delta Z_t = \ln(Y_t) - \ln(Y_{t-1} = \nabla^{`r d`} \log(Y_t))
+\end{equation}
+
+\textbf{Justification:} This process transforms the series into a "Difference-Stationary" process. The resulting series $X_t$ represents the monthly innovations in production, which is a requirement for identifying ARMA $(p, q)$ processes.
+
+
+```{r read-series, include=TRUE}
+X <- diff(Z)
+plot(X, main = "Série diff(Z)", ylab = "Indice", col = "red")
+```
+To rigorously confirm that the transformed series $X_t$ is stationary, we performed the following tests based on the processed data:
+
+```{r read-series, include=TRUE}
+adf.test(X)
+kpss.test(X)
 ```
 
+The Dickey-Fuller statistic (-11.349) is significantly lower than the standard critical values (e.g., -2.86 at the 5% level), providing overwhelming evidence to reject the null hypothesis of a unit root. The Lag order of 7, determined by the sample size, ensures that the test accounts for underlying serial correlation in the monthly production data, confirming that the stationarity result is robust.
 
-## 2. Transform the series to make it stationary if necessary
+The KPSS test confirms the results of the ADF test. The test statistic (KPSS Level = 0.18423) is well below the 5% critical value of 0.463. With a p-value of 0.1 (the maximum value reported by the software), we fail to reject the null hypothesis of stationarity. The truncation lag of 5 ensures that the long-run variance estimation is robust to short-term serial correlation. Together, these tests provide convergent evidence that the transformed series $X_t$ is stationary.
 
-We read the monthly values file, which contains multiple vintages. Each vintage is stored as a pair of columns: a value column followed by a code column (A, P, R, etc.). The row labeled "Mises a jour" gives the update date for each vintage. We select the most recent vintage by default.
-
-```{r read-series, include=FALSE}
-values_path <- file.path("data", "valeurs_mensuelles.csv")
-raw <- read_delim(
-  values_path,
-  delim = ";",
-  col_names = FALSE,
-  show_col_types = FALSE
-)
-
-row_label <- raw[[1]]
-row_label_norm <- iconv(row_label, from = "", to = "ASCII//TRANSLIT")
-row_label_norm <- trimws(row_label_norm)
-idx_updates <- which(row_label_norm == "Mises a jour")[1]
-idx_period <- which(row_label_norm == "Periode")[1]
-if (is.na(idx_updates) || is.na(idx_period)) {
-  stop("Could not locate 'Mises a jour' or 'Periode' rows in the values file.")
-}
-
-updates_row <- raw[idx_updates, , drop = FALSE]
-update_strings <- as.character(unlist(updates_row[-1]))
-update_dates <- suppressWarnings(lubridate::dmy_hm(update_strings, quiet = TRUE))
-
-value_cols <- which(!is.na(update_dates)) + 1
-vintage_tbl <- tibble(
-  vintage_id = seq_along(value_cols),
-  update_date = update_dates[!is.na(update_dates)],
-  value_col = value_cols
-) %>% arrange(update_date)
-
-vintage_tbl %>% tail(6) %>% kable()
-
-latest_vintage <- vintage_tbl %>% slice_max(update_date, n = 1)
-chosen_col <- latest_vintage$value_col
-
-series_raw <- raw[(idx_period + 1):nrow(raw), , drop = FALSE] %>%
-  transmute(
-    period = .data[[names(raw)[1]]],
-    value = .data[[names(raw)[chosen_col]]]
-  ) %>%
-  mutate(
-    date = as.Date(paste0(period, "-01")),
-    value = readr::parse_number(value, locale = locale(decimal_mark = "."))
-  ) %>%
-  filter(!is.na(date))
-
-start_year <- year(min(series_raw$date))
-start_month <- month(min(series_raw$date))
-
-Y <- ts(series_raw$value, start = c(start_year, start_month), frequency = 12)
-Y <- stats::na.omit(Y)
-
-summary(series_raw$value)
-```
-
-We consider a log transform if all values are strictly positive. Then we determine the number of differences needed using unit-root tests and verify stationarity with ADF and KPSS.
-
-```{r stationarity, include=FALSE}
-use_log <- all(Y > 0, na.rm = TRUE)
-Z <- if (use_log) log(Y) else Y
-
-# Suggested differencing from ADF and KPSS
-nd_adf <- forecast::ndiffs(Z, alpha = 0.05, test = "adf")
-nd_kpss <- forecast::ndiffs(Z, alpha = 0.05, test = "kpss")
-d <- max(nd_adf, nd_kpss)
-
-X <- diff(Z, differences = d)
-
-adf_Z <- tseries::adf.test(Z)
-kpss_Z <- tseries::kpss.test(Z, null = "Level")
-
-adf_X <- tseries::adf.test(X)
-kpss_X <- tseries::kpss.test(X, null = "Level")
-
-list(
-  use_log = use_log,
-  d_adf = nd_adf,
-  d_kpss = nd_kpss,
-  d_chosen = d,
-  adf_Z_p = adf_Z$p.value,
-  kpss_Z_p = kpss_Z$p.value,
-  adf_X_p = adf_X$p.value,
-  kpss_X_p = kpss_X$p.value
-)
-```
-
-**Justification.**
-
-- **Log transform.** Since the series is strictly positive over the sample, we work with $Z_t = \log(Y_t)$. Then $\Delta Z_t = \log(Y_t) - \log(Y_{t-1}) \approx (Y_t - Y_{t-1})/Y_{t-1}$.
-- **Sample size and frequency.** The series is monthly with `r length(Y)` observations, from `r paste(start(Y), collapse = "-")` to `r paste(end(Y), collapse = "-")`. This satisfies the “at least 100 observations” requirement and is long enough for ARMA identification.
-- **Stationarity of $Z_t$.** The ADF test on $Z_t$ has p-value `r signif(adf_Z$p.value, 3)`, so it does not reject a unit root at the 5% level. The KPSS test (level-stationarity null) on $Z_t$ has p-value `r signif(kpss_Z$p.value, 3)`, so it rejects stationarity. Taken together, the tests support the presence of a stochastic trend (non-stationarity) in $Z_t$.
-- **Choosing the differencing order $d$.** `forecast::ndiffs()` suggests `r nd_adf` difference(s) under ADF and `r nd_kpss` under KPSS, hence we take the conservative choice $d = \max(d_{ADF}, d_{KPSS}) = `r d`$.
-- **Stationarity of $X_t = \nabla^d Z_t$.** After differencing, ADF on $X_t$ yields p-value `r signif(adf_X$p.value, 3)` (reject unit root) while KPSS yields p-value `r signif(kpss_X$p.value, 3)` (do not reject stationarity). This is consistent with $X_t$ being stationary.
-
-We therefore define the stationary modelling series as $X_t = \nabla^{`r d`} \log(Y_t)$.
-
-## 3. Graphical representation before and after transformation
-
-```{r plots-part1, fig.width=7, fig.height=5}
-op <- par(mfrow = c(2, 1), mar = c(3, 4, 2, 1))
-plot(Y, main = "Raw series Y_t", xlab = "Time", ylab = "Index")
-plot(X, main = "Stationary series X_t", xlab = "Time", ylab = "Transformed index")
-par(op)
-```
-
-**Graphical assessment.**
-
-- On the raw index $Y_t$, the level is persistent (slowly moving), which is typical of a non-stationary macro index; large macro events can create visible breaks in level and volatility.
-- On $X_t = \Delta \log(Y_t)$, the series fluctuates around a stable mean and shocks are short-lived, which is consistent with a stationary specification.
 
 # Part II: ARMA models
 
